@@ -2,98 +2,80 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
 
-st.set_page_config(layout="wide", page_title="Global Macro Terminal")
+st.set_page_config(layout="wide", page_title="Macro Quant Terminal")
 
-# --- DATA ENGINE (NO API KEY REQUIRED) ---
+# --- DATA ENGINE ---
 @st.cache_data(ttl=3600)
-def fetch_terminal_data():
-    # Tickers: 13-week Treasury (^IRX), 10Y Yield (^TNX), DXY (DX-Y.NYB)
-    # Bunds (DE10Y.B), Gilts (GBP10Y-GB), Copper (HG=F), Gold (GC=F)
+def fetch_macro_data():
+    # Adding 2-Year Yields for US, Germany (Eurozone), and Japan
     tickers = {
         "DXY": "DX-Y.NYB",
-        "EURUSD": "EURUSD=X",
-        "USDJPY": "JPY=X",
-        "US_10Y": "^TNX",
-        "US_2Y": "^ZTN=F", # 2Y Note Futures as proxy
+        "US_2Y": "ZT=F",    # US 2Y Treasury Note Futures
+        "GER_2Y": "FGBS.EX", # Euro Schatz (German 2Y)
+        "JPY_2Y": "2YY=F",   # Japan 2Y Yield
         "Copper": "HG=F",
         "Gold": "GC=F",
         "VIX": "^VIX"
     }
-    
+    # Fetching 1-year of daily data
     data = yf.download(list(tickers.values()), period="1y", interval="1d")['Close']
-    # Rename columns back to readable names
     inv_tickers = {v: k for k, v in tickers.items()}
-    data = data.rename(columns=inv_tickers)
-    return data
+    return data.rename(columns=inv_tickers)
 
-df = fetch_terminal_data()
+df = fetch_macro_data()
 
 # --- CALCULATIONS ---
-# Copper/Gold Ratio (Risk Barometer)
-df['Cu_Au_Ratio'] = df['Copper'] / df['Gold']
+# 1. Spread US vs Germany (EUR/USD Driver)
+df['US_GER_Spread'] = df['US_2Y'] - df['GER_2Y']
 
-# Weekly Change % for Dashboard
-weekly_change = ((df.iloc[-1] - df.iloc[-5]) / df.iloc[-5] * 100)
+# 2. Spread US vs Japan (USD/JPY Driver)
+df['US_JPY_Spread'] = df['US_2Y'] - df['JPY_2Y']
 
-# --- HEADER SECTION ---
-st.title("🏛️ Professional Macro Terminal (Weekly Outlook)")
-st.markdown(f"**Last Update:** {df.index[-1].strftime('%Y-%m-%d')} | **Market Regime:** {'Risk-Off (USD Strong)' if df['VIX'].iloc[-1] > 20 else 'Risk-On (USD Weak)'}")
+# --- HEADER ---
+st.title("🏛️ Professional Macro Terminal (Institutional View)")
 
-# --- ROW 1: THE BIG THREE (BIAS INDICATORS) ---
-col1, col2, col3 = st.columns(3)
+# --- SECTION 1: CENTRAL BANK POLICY RATES (Static Data for 2026) ---
+st.subheader("🌍 Central Bank Policy Rates (Jan 2026)")
+rate_data = {
+    "Country": ["USA (Fed)", "Eurozone (ECB)", "UK (BoE)", "Japan (BoJ)", "Australia (RBA)"],
+    "Current Rate": ["3.75%", "2.15%", "3.75%", "0.75%", "3.60%"],
+    "Last Move": ["-25bps Cut", "Hold", "-25bps Cut", "+25bps Hike", "Hold"],
+    "Sentiment": ["Dovish", "Neutral", "Dovish", "Hawkish", "Hawkish"]
+}
+st.table(pd.DataFrame(rate_data))
+
+# --- SECTION 2: THE FX DRIVERS (YIELD SPREADS) ---
+st.divider()
+st.subheader("📈 Yield Differentials (The Real FX Drivers)")
+col1, col2 = st.columns(2)
 
 with col1:
-    val = df['DXY'].iloc[-1]
-    change = weekly_change['DXY']
-    st.metric("Dollar Index (DXY)", f"{val:.2f}", f"{change:.2f}% (Weekly)")
-    fig = go.Figure(go.Scatter(x=df.index[-30:], y=df['DXY'].iloc[-30:], line=dict(color='#00ffcc')))
-    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0))
-    st.plotly_chart(fig, use_container_width=True)
+    st.write("**US vs Germany 2Y Spread** (Leads EURUSD)")
+    # If the spread goes UP, EURUSD usually goes DOWN
+    fig1 = go.Figure(go.Scatter(x=df.index[-60:], y=df['US_GER_Spread'].tail(60), line=dict(color='cyan')))
+    fig1.update_layout(template="plotly_dark", height=300)
+    st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
-    val = df['US_10Y'].iloc[-1]
-    change = weekly_change['US_10Y']
-    st.metric("US 10Y Yield (%)", f"{val:.2f}%", f"{change:.2f}% (Weekly)")
-    fig = go.Figure(go.Scatter(x=df.index[-30:], y=df['US_10Y'].iloc[-30:], line=dict(color='#ffaa00')))
-    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0))
-    st.plotly_chart(fig, use_container_width=True)
+    st.write("**US vs Japan 2Y Spread** (Leads USDJPY)")
+    # If the spread goes DOWN, USDJPY usually goes DOWN (Yen Strength)
+    fig2 = go.Figure(go.Scatter(x=df.index[-60:], y=df['US_JPY_Spread'].tail(60), line=dict(color='yellow')))
+    fig2.update_layout(template="plotly_dark", height=300)
+    st.plotly_chart(fig2, use_container_width=True)
 
-with col3:
-    val = df['Cu_Au_Ratio'].iloc[-1]
-    change = weekly_change['Cu_Au_Ratio']
-    st.metric("Copper/Gold Ratio", f"{val:.4f}", f"{change:.2f}% (Weekly)")
-    fig = go.Figure(go.Scatter(x=df.index[-30:], y=df['Cu_Au_Ratio'].iloc[-30:], line=dict(color='#ff00ff')))
-    fig.update_layout(template="plotly_dark", height=200, margin=dict(l=0,r=0,t=0,b=0))
-    st.plotly_chart(fig, use_container_width=True)
-
-# --- ROW 2: WEEKLY CONVICTION TABLE ---
+# --- SECTION 3: THE "CARRY TRADE" DASHBOARD ---
 st.divider()
-st.subheader("📊 Weekly Macro Conviction Matrix")
+st.subheader("💰 Carry Trade Viability")
+st.write("Professional traders borrow low-interest currencies (Yen) to buy high-interest ones (USD).")
 
-# Logic for Bias
-def determine_bias(row):
-    if row['Indicator'] == 'DXY' and row['Wk_Change'] > 0: return "Bullish / Short-Squeeze"
-    if row['Indicator'] == 'Cu_Au_Ratio' and row['Wk_Change'] < 0: return "Risk-Off (Buy USD)"
-    if row['Indicator'] == 'US_10Y' and row['Wk_Change'] < 0: return "Dovish (Short USD)"
-    return "Neutral / Rangebound"
+# Simple Carry Score: Spread / VIX
+# High Spread + Low VIX = Good for Carry. High VIX = Carry Unwind (Market Crash).
+current_vix = df['VIX'].iloc[-1]
+carry_score = (df['US_JPY_Spread'].iloc[-1] / current_vix) * 10
 
-matrix_df = pd.DataFrame({
-    "Indicator": ["DXY", "US_10Y", "Cu_Au_Ratio", "VIX", "EURUSD"],
-    "Current": [df['DXY'].iloc[-1], df['US_10Y'].iloc[-1], df['Cu_Au_Ratio'].iloc[-1], df['VIX'].iloc[-1], df['EURUSD'].iloc[-1]],
-    "Wk_Change": [weekly_change['DXY'], weekly_change['US_10Y'], weekly_change['Cu_Au_Ratio'], weekly_change['VIX'], weekly_change['EURUSD']]
-})
-matrix_df['Actionable Bias'] = matrix_df.apply(determine_bias, axis=1)
-
-st.table(matrix_df.style.format({"Current": "{:.2f}", "Wk_Change": "{:.2f}%"}))
-
-# --- ROW 3: GLOBAL BOND MAP (INTERN EXPLANATION) ---
-st.divider()
-st.subheader("🧭 Junior Intern Macro Map")
-st.write("""
-**How to use this for your Weekly Bias:**
-1. **DXY vs 10Y Yield:** If the 10Y Yield is falling but DXY is rising, it's a **Fake Move**. The Dollar will likely crash later in the week.
-2. **Copper/Gold Ratio:** If this ratio breaks its 1-month low, exit all your currency shorts. It means a recession scare is starting.
-3. **VIX Check:** If VIX is moving from 12 toward 18, stop shorting the Dollar. Capital is running for cover.
-""")
+st.info(f"**Current Carry Score:** {carry_score:.2f} | **VIX Check:** {current_vix:.2f}")
+if current_vix > 20:
+    st.error("🚨 WARNING: High Volatility. Carry trades are likely UNWINDING. Safe Haven flows into Yen/Dollar.")
+else:
+    st.success("✅ Calm Markets. High-yield currencies should remain supported.")

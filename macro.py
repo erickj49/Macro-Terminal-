@@ -4,82 +4,87 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 
-st.set_page_config(layout="wide", page_title="Macro Quant Terminal V2")
+st.set_page_config(layout="wide", page_title="Junior Desk: Narrative Builder")
 
-# --- 1. DATA ENGINE ---
+# --- 1. THE NARRATIVE DATA ENGINE ---
 @st.cache_data(ttl=3600)
-def get_macro_data():
+def fetch_terminal_v4():
+    # Tracking DXY, US 10Y, and Proxies for Economic Surprise (Citi ESI is hard to get, so we use Momentum of Growth)
     tickers = {
         "DXY": "DX-Y.NYB",
         "US_10Y": "^TNX",
+        "EEM": "EEM",           # Emerging Markets (Global Growth Sentiment)
         "Copper": "HG=F",
         "Gold": "GC=F",
         "VIX": "^VIX",
-        "SPY": "SPY"
+        "EURUSD": "EURUSD=X"
     }
     data = yf.download(list(tickers.values()), period="1y", interval="1d")['Close']
-    inv_tickers = {v: k for k, v in tickers.items()}
-    return data.rename(columns=inv_tickers)
+    return data.rename(columns={v: k for k, v in tickers.items()})
 
-df = get_macro_data()
+df = fetch_terminal_v4()
 
-# --- 2. Z-SCORE CALCULATIONS ---
-def calculate_zscore(series, window=20):
-    # Standard Z-Score formula: (Price - Mean) / Standard Deviation
-    rolling_mean = series.rolling(window=window).mean()
-    rolling_std = series.rolling(window=window).std()
-    return (series - rolling_mean) / rolling_std
-
-# Apply Z-Score to all major columns
-z_cols = ['DXY', 'US_10Y', 'VIX', 'SPY']
-for col in z_cols:
-    df[f'{col}_Z'] = calculate_zscore(df[col])
+# --- 2. CALCULATING THE "SURPRISE" PROXY ---
+# Institutional ESI measures Actual vs. Forecast. 
+# For this dashboard, we use 10-day Price Momentum vs. 50-day Trend as a "Surprise Proxy"
+df['Growth_Surprise'] = (df['US_10Y'] - df['US_10Y'].rolling(20).mean()) / df['US_10Y'].rolling(20).std()
+df['Risk_Ratio'] = df['Copper'] / df['Gold']
 
 # --- 3. DASHBOARD UI ---
-st.title("🏛️ Institutional Macro Terminal")
-st.markdown("### Statistical Edge: Z-Score Analysis")
+st.title("🏛️ USD Weekly Narrative Builder")
+st.markdown("### Goal: Construct the 'Why' behind the move.")
 
-# Metric Row
-c1, c2, c3, c4 = st.columns(4)
-metrics = [("DXY", "DXY_Z"), ("10Y Yield", "US_10Y_Z"), ("VIX", "VIX_Z"), ("S&P 500", "SPY_Z")]
-
-for i, (name, col_z) in enumerate(metrics):
-    current_z = df[col_z].iloc[-1]
-    with [c1, c2, c3, c4][i]:
-        # Color coding the Z-score for quick reading
-        color = "inverse" if abs(current_z) > 2 else "normal"
-        st.metric(f"{name} Z-Score", f"{current_z:.2f}σ", delta_color=color)
+# ROW 1: THE CORE THEMES
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.metric("Dollar Strength (DXY)", f"{df['DXY'].iloc[-1]:.2f}")
+    st.caption("The Scoreboard: Is the Dollar winning?")
+with c2:
+    st.metric("Growth Surprise Proxy", f"{df['Growth_Surprise'].iloc[-1]:.2f}σ")
+    st.caption("The Engine: Are yields 'surprising' to the upside?")
+with c3:
+    st.metric("Global Risk Ratio", f"{df['Risk_Ratio'].iloc[-1]:.4f}")
+    st.caption("The Vibe: Is the world building (Copper) or hiding (Gold)?")
 
 st.divider()
 
-# --- 4. THE BIAS ENGINE (Z-SCORE LOGIC) ---
-st.subheader("📊 Mathematical Bias Engine")
+# ROW 2: NARRATIVE VISUALIZATION
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
-    # Charting the Z-score of the Dollar
+    st.subheader("📈 The Divergence: DXY vs. Growth Surprise")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index[-60:], y=df['DXY_Z'].tail(60), name="DXY Z-Score", line=dict(color='cyan')))
-    # Add Extreme Threshold Lines
-    fig.add_hline(y=2.0, line_dash="dash", line_color="red", annotation_text="Overbought (+2σ)")
-    fig.add_hline(y=-2.0, line_dash="dash", line_color="green", annotation_text="Oversold (-2σ)")
-    fig.update_layout(title="US Dollar Index (DXY) Statistical Stretch", template="plotly_dark", height=400)
+    fig.add_trace(go.Scatter(x=df.index[-60:], y=df['DXY'].tail(60), name="DXY (Price)", yaxis="y1"))
+    fig.add_trace(go.Bar(x=df.index[-60:], y=df['Growth_Surprise'].tail(60), name="Growth Surprise", yaxis="y2", opacity=0.3))
+    
+    fig.update_layout(
+        template="plotly_dark",
+        yaxis=dict(title="DXY Price"),
+        yaxis2=dict(title="Surprise (Sigma)", overlaying="y", side="right"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 with col_right:
-    st.write("**Current Market Condition:**")
-    dxy_z = df['DXY_Z'].iloc[-1]
+    st.info("**Storytelling Workshop:**")
+    last_surprise = df['Growth_Surprise'].iloc[-1]
+    last_dxy = (df['DXY'].iloc[-1] - df['DXY'].iloc[-5])
     
-    if dxy_z > 2.0:
-        st.error("🚨 DXY is EXTREMELY OVERBOUGHT. Statistically, the USD should cool off here. High probability for a 'Sell the Rip' week.")
-    elif dxy_z < -2.0:
-        st.success("✅ DXY is EXTREMELY OVERSOLD. Look for a 'Mean Reversion' bounce. Bearish for stocks, Bullish for USD.")
+    if last_surprise > 1 and last_dxy > 0:
+        st.success("📝 **Current Story:** 'US Exceptionalism'. Data is beating expectations and the Dollar is being rewarded. This is a healthy trend.")
+    elif last_surprise < -1 and last_dxy > 0:
+        st.error("📝 **Current Story:** 'Flight to Safety'. Data is missing expectations but the Dollar is RISING anyway. This means people are scared. Avoid risk assets.")
+    elif last_surprise > 1 and last_dxy < 0:
+        st.warning("📝 **Current Story:** 'Exhaustion'. Data is great but the Dollar is falling. The 'Good News' is already priced in. Watch for a reversal.")
     else:
-        st.info("⚖️ DXY is in a Normal Range. Direction will be driven by news flow (NFP, CPI) rather than math.")
+        st.write("Neutral Narrative. Market is waiting for the next major catalyst (NFP/CPI).")
 
 st.divider()
-st.subheader("🧭 How to Trade This:")
-st.write("""
-1.  **Mean Reversion:** When an asset hits **±2.0σ**, it is like a rubber band pulled to its limit. It wants to snap back to 0. 
-2.  **Confluence:** If **DXY Z-Score is +2.0** AND **VIX Z-Score is -2.0**, you have a perfect setup to Short USD and Buy Stocks, because fear is too low and the dollar is too high.
+
+# ROW 3: THE JUNIOR DESK "BEYOND BLOOMBERG" CHECKLIST
+st.subheader("📝 Monday Morning Narrative Assignment")
+st.markdown("""
+1. **The Divergence:** Did the Dollar move *opposite* to the Growth Surprise this week? If so, why? (e.g. Geopolitics, Month-end flows).
+2. **The Laggard:** Look at **EURUSD**. If the US Growth Surprise is high but EURUSD isn't falling, is the ECB about to turn 'Hawkish'?
+3. **The 'Real' Ask:** Is the Dollar strong because people *want* it, or because they *need* it to cover losses elsewhere (Check VIX)?
 """)
